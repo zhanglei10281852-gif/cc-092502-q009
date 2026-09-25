@@ -3,10 +3,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from app.database import close_connection, connection, init_db
 from app.schemas import JobCreate, JobFinish, LoginRequest, MemberCreate, ProjectCreate, UserCreate
 from app.service import ResearchService, ServiceError
+from app.chronology_routes import router as chronology_router
+from app.chronology_service import ChronologyService
 
 
 @asynccontextmanager
@@ -17,13 +20,13 @@ async def lifespan(app: FastAPI):
     close_connection()
 
 
-app = FastAPI(title="考古研究协作基础服务", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="考古研究协作基础服务", version="1.1.0", lifespan=lifespan)
+app.include_router(chronology_router)
 
 
 @app.exception_handler(ServiceError)
 async def handle_service_error(request, exc: ServiceError):
     del request
-    from fastapi.responses import JSONResponse
     return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
 
 
@@ -35,7 +38,7 @@ def current_user(authorization: str = Header(...)):
 
 @app.get("/")
 def root():
-    return {"service": "考古研究协作基础服务", "version": "1.0.0"}
+    return {"service": "考古研究协作基础服务", "version": "1.1.0", "modules": ["foundation", "regional-chronology"]}
 
 
 @app.get("/api/system/health")
@@ -88,3 +91,21 @@ def claim_job(worker_id: str = Query(..., min_length=1)):
 @app.post("/api/jobs/{job_id}/finish")
 def finish_job(job_id: int, payload: JobFinish):
     return ResearchService().finish(job_id, payload.worker_id, payload.result)
+
+
+# ---------- 区域年代序列：离线导入 / 导出 ----------
+
+@app.get("/api/projects/{project_id}/chron/export")
+def export_chronology(project_id: int, user=Depends(current_user)):
+    service = ChronologyService()
+    service.require(project_id, user["id"], {"owner", "researcher", "reviewer", "viewer"})
+    bundle = service.export_project(project_id)
+    service.audit("chron.project.export", project_id, user["id"], "project", str(project_id),
+                  {"evidence": len(bundle["evidence"]), "snapshots": len(bundle["snapshots"])})
+    return bundle
+
+
+@app.post("/api/projects/chron/import")
+def import_chronology(payload: dict, project_code: str | None = Query(default=None), user=Depends(current_user)):
+    # 仅项目负责人可向新项目导入
+    return ChronologyService().import_project(payload, actor_id=user["id"], project_code=project_code)
