@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from app.database import close_connection, connection, init_db
 from app.schemas import JobCreate, JobFinish, LoginRequest, MemberCreate, ProjectCreate, UserCreate
 from app.service import ResearchService, ServiceError
+from app import chrono_api
 
 
 @asynccontextmanager
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="考古研究协作基础服务", version="1.0.0", lifespan=lifespan)
+app.include_router(chrono_api.router)
 
 
 @app.exception_handler(ServiceError)
